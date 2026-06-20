@@ -1,15 +1,45 @@
+name: Mirror Linux EFI Tree
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH deploy key
+        env:
+          SSH_KEY: ${{ secrets.EFI_MIRROR_SSH_KEY }}
+        run: |
+          set -eux
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          echo "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
       - name: Mirror Linux EFI tree
         run: |
           set -eux
 
-          git clone --mirror \
-            https://kernel.googlesource.com/pub/scm/linux/kernel/git/efi/efi.git \
-            efi.git
+          UPSTREAM_URL="https://kernel.googlesource.com/pub/scm/linux/kernel/git/efi/efi.git"
+          GITHUB_URL="git@github.com:r1chard-lyu/linux-efi-mirror.git"
 
+          git clone --mirror "$UPSTREAM_URL" efi.git
           cd efi.git
 
-          git remote add github \
-            git@github.com:r1chard-lyu/linux-efi-mirror.git
+          # Do not push bootstrap refs to origin.
+          # origin is a mirror remote because this repo was cloned with --mirror.
+          git remote add github "$GITHUB_URL"
 
           BOOTSTRAP_REF="refs/heads/next"
 
@@ -27,18 +57,29 @@
 
           echo "Bootstrap ref: $BOOTSTRAP_REF"
 
-          STEP_SIZE=500
+          LOCAL_BOOTSTRAP_COMMIT="$(git rev-parse "$BOOTSTRAP_REF")"
+          REMOTE_BOOTSTRAP_COMMIT="$(
+            git ls-remote "$GITHUB_URL" "$BOOTSTRAP_REF" | awk '{print $1}' || true
+          )"
 
-          {
-            git log --reverse --format='%H' "$BOOTSTRAP_REF" \
-              | awk "NR % ${STEP_SIZE} == 0 { print }"
-            git rev-parse "$BOOTSTRAP_REF"
-          } | awk '!seen[$0]++' > /tmp/bootstrap-commits.txt
+          if [ "$REMOTE_BOOTSTRAP_COMMIT" != "$LOCAL_BOOTSTRAP_COMMIT" ]; then
+            echo "Bootstrapping $BOOTSTRAP_REF in chunks"
 
-          while read commit; do
-            [ -n "$commit" ] || continue
-            echo "Pushing bootstrap commit $commit to $BOOTSTRAP_REF"
-            git push github "+${commit}:${BOOTSTRAP_REF}"
-          done < /tmp/bootstrap-commits.txt
+            STEP_SIZE=10000
+
+            {
+              git log --reverse --format='%H' "$BOOTSTRAP_REF" \
+                | awk "NR % ${STEP_SIZE} == 0 { print }"
+              git rev-parse "$BOOTSTRAP_REF"
+            } | awk '!seen[$0]++' > /tmp/bootstrap-commits.txt
+
+            while read commit; do
+              [ -n "$commit" ] || continue
+              echo "Pushing bootstrap commit $commit to $BOOTSTRAP_REF"
+              git push github "+${commit}:${BOOTSTRAP_REF}"
+            done < /tmp/bootstrap-commits.txt
+          else
+            echo "$BOOTSTRAP_REF already bootstrapped"
+          fi
 
           git push --mirror github
