@@ -1,0 +1,101 @@
+name: Mirror Linux PCI Tree
+
+on:
+  schedule:
+    - cron: '15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH deploy key
+        env:
+          SSH_KEY: ${{ secrets.PCI_MIRROR_SSH_KEY }}
+        run: |
+          set -eux
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          echo "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Mirror Linux PCI tree
+        run: |
+          set -eux
+
+          UPSTREAM_URL="https://kernel.googlesource.com/pub/scm/linux/kernel/git/pci/pci.git"
+          GITHUB_URL="git@github.com:r1chard-lyu/linux-pci-mirror.git"
+
+          git clone --mirror "$UPSTREAM_URL" linux-pci.git
+          cd linux-pci.git
+
+          # Do not push bootstrap refs to origin.
+          # origin is a mirror remote because this repo was cloned with --mirror.
+          git remote add github "$GITHUB_URL"
+
+          # Pick a large branch for first-time bootstrap.
+          # Prefer common PCI/kernel branch names, then fall back to the largest branch.
+          BOOTSTRAP_REF=""
+
+          for ref in \
+            refs/heads/master \
+            refs/heads/main \
+            refs/heads/next \
+            refs/heads/for-linus \
+            refs/heads/pci/next \
+            refs/heads/pci/for-linus
+          do
+            if git show-ref --verify --quiet "$ref"; then
+              BOOTSTRAP_REF="$ref"
+              break
+            fi
+          done
+
+          if [ -z "$BOOTSTRAP_REF" ]; then
+            BOOTSTRAP_REF="$(
+              git for-each-ref --format='%(refname)' refs/heads \
+                | while read ref; do
+                    echo "$(git rev-list --count "$ref") $ref"
+                  done \
+                | sort -rn \
+                | head -n 1 \
+                | cut -d' ' -f2
+            )"
+          fi
+
+          echo "Bootstrap ref: $BOOTSTRAP_REF"
+
+          LOCAL_BOOTSTRAP_COMMIT="$(git rev-parse "$BOOTSTRAP_REF")"
+          REMOTE_BOOTSTRAP_COMMIT="$(
+            git ls-remote "$GITHUB_URL" "$BOOTSTRAP_REF" | awk '{print $1}' || true
+          )"
+
+          if [ "$REMOTE_BOOTSTRAP_COMMIT" != "$LOCAL_BOOTSTRAP_COMMIT" ]; then
+            echo "Bootstrapping $BOOTSTRAP_REF in chunks"
+
+            STEP_SIZE=10000
+
+            {
+              git log --reverse --format='%H' "$BOOTSTRAP_REF" \
+                | awk "NR % ${STEP_SIZE} == 0 { print }"
+              git rev-parse "$BOOTSTRAP_REF"
+            } | awk '!seen[$0]++' > /tmp/bootstrap-commits.txt
+
+            while read commit; do
+              [ -n "$commit" ] || continue
+              echo "Pushing bootstrap commit $commit to $BOOTSTRAP_REF"
+              git push github "+${commit}:${BOOTSTRAP_REF}"
+            done < /tmp/bootstrap-commits.txt
+          else
+            echo "$BOOTSTRAP_REF already bootstrapped"
+          fi
+
+          git push --mirror github
