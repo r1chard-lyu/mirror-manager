@@ -1,32 +1,3 @@
-name: Mirror Linux EFI Tree
-
-on:
-  schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  mirror:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Setup SSH deploy key
-        env:
-          SSH_KEY: ${{ secrets.EFI_MIRROR_SSH_KEY }}
-        run: |
-          set -eux
-
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          echo "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
-
       - name: Mirror Linux EFI tree
         run: |
           set -eux
@@ -37,11 +8,9 @@ jobs:
 
           cd efi.git
 
-          git remote set-url --push origin \
+          git remote add github \
             git@github.com:r1chard-lyu/linux-efi-mirror.git
 
-          # Bootstrap one large branch in chunks first to avoid GitHub's 2 GiB push limit.
-          # EFI tree usually has refs/heads/next; fall back to the largest local branch if needed.
           BOOTSTRAP_REF="refs/heads/next"
 
           if ! git show-ref --verify --quiet "$BOOTSTRAP_REF"; then
@@ -69,8 +38,7 @@ jobs:
           while read commit; do
             [ -n "$commit" ] || continue
             echo "Pushing bootstrap commit $commit to $BOOTSTRAP_REF"
-            git push origin "+${commit}:${BOOTSTRAP_REF}"
+            git push github "+${commit}:${BOOTSTRAP_REF}"
           done < /tmp/bootstrap-commits.txt
 
-          # Final full mirror after most objects already exist on GitHub.
-          git push --mirror origin
+          git push --mirror github
