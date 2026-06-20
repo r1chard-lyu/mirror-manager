@@ -13,9 +13,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Mirror Linux EFI tree
+      - name: Setup SSH deploy key
         env:
-          MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
+          SSH_KEY: ${{ secrets.EFI_MIRROR_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          echo "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Mirror Linux EFI tree
         run: |
           set -eux
 
@@ -25,5 +35,7 @@ jobs:
 
           cd efi.git
 
-          git push --mirror \
-            https://x-access-token:${MIRROR_PAT}@github.com/r1chard-lyu/linux-efi-mirror.git
+          git remote set-url --push origin \
+            git@github.com:r1chard-lyu/linux-efi-mirror.git
+
+          git push --mirror
