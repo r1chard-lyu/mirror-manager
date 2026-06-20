@@ -1,0 +1,29 @@
+name: Mirror Linux EFI Tree
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Mirror Linux EFI tree
+        env:
+          MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
+        run: |
+          set -eux
+
+          git clone --mirror \
+            https://kernel.googlesource.com/pub/scm/linux/kernel/git/efi/efi.git \
+            efi.git
+
+          cd efi.git
+
+          git push --mirror \
+            https://x-access-token:${MIRROR_PAT}@github.com/r1chard-lyu/linux-efi-mirror.git

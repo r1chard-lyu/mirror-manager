@@ -1,0 +1,29 @@
+name: Mirror Linux TPM Tree
+
+on:
+  schedule:
+    - cron: '30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Mirror Linux TPM tree
+        env:
+          MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
+        run: |
+          set -eux
+
+          git clone --mirror \
+            https://git.kernel.org/pub/scm/linux/kernel/git/jarkko/linux-tpmdd.git \
+            linux-tpmdd.git
+
+          cd linux-tpmdd.git
+
+          git push --mirror \
+            https://x-access-token:${MIRROR_PAT}@github.com/r1chard-lyu/linux-tpmdd-mirror.git
